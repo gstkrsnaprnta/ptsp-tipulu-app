@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "678173948467",
+    "firebase_url": "https://ptsp-kelurahan-tipulu-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "ptsp-kelurahan-tipulu",
+    "storage_bucket": "ptsp-kelurahan-tipulu.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:678173948467:android:f8bab7c78df63a287fc146",
+        "android_client_info": {
+          "package_name": "com.example.ptsp_tipulu_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDpesG7YboHYxwdEDIQGp7FELFc2EwZkkI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:678173948467:android:d21f77d719204e407fc146",
+        "android_client_info": {
+          "package_name": "com.ptsp.ptsp_tipulu"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDpesG7YboHYxwdEDIQGp7FELFc2EwZkkI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
