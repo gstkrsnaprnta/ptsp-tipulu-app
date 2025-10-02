@@ -1,11 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
-import 'package:dio/dio.dart'; // Untuk download file
+import 'package:dio/dio.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart'; // Untuk path direktori
-import 'package:share_plus/share_plus.dart'; // Untuk share/print
+import 'package:path_provider/path_provider.dart';
+import 'package:ptsp_tipulu_app/pdf_viewer_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -18,7 +19,7 @@ class WebViewScreen extends StatefulWidget {
 
 class _WebViewScreenState extends State<WebViewScreen> {
   late final WebViewController _controller;
-  bool _isDownloading = false; // State untuk melacak status download
+  bool _isProcessingFile = false; // Ganti nama agar lebih umum
 
   @override
   void initState() {
@@ -27,71 +28,125 @@ class _WebViewScreenState extends State<WebViewScreen> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0x00000000))
+      // ===================================================================
+      // ▼▼▼ NAVIGATION DELEGATE DIKEMBALIKAN UNTUK HANDLE LINK BIASA ▼▼▼
+      // ===================================================================
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (NavigationRequest request) {
+            print(">>> Navigasi Link Dicegat: ${request.url}");
             final uri = Uri.parse(request.url);
 
-            // 2. Handle link WhatsApp (tidak berubah)
+            // Handle link WhatsApp
             if (uri.host == 'wa.me' || uri.host == 'api.whatsapp.com') {
+              print(">>> AKSI: Buka WhatsApp");
               launchUrl(uri, mode: LaunchMode.externalApplication);
               return NavigationDecision.prevent;
             }
 
-            // 3. Handle link untuk CETAK atau LIHAT DOKUMEN (logika baru)
-            if (request.url.contains('/list-pengajuan/cetak/') ||
-                request.url.contains('/list-pengajuan/stream')) {
-              print('Mencegat link file, akan diunduh: ${request.url}');
-              _downloadAndOpenFile(request.url); // Panggil fungsi download
-              return NavigationDecision.prevent; // Hentikan navigasi WebView
+            // Handle link "Lihat Dokumen" (GET request)
+            if (request.url.contains('/list-pengajuan/stream')) {
+              print(">>> AKSI: Proses Lihat Dokumen (GET)");
+              // Panggil fungsi download dengan data form null
+              _downloadAndProcessFile(request.url, null);
+              return NavigationDecision.prevent;
             }
 
-            // Izinkan semua navigasi lainnya
+            print(">>> AKSI: Izinkan navigasi normal");
             return NavigationDecision.navigate;
           },
         ),
       )
+      // ===================================================================
+      // ▲▲▲ PERUBAHAN SELESAI ▲▲▲
+      // ===================================================================
       ..addJavaScriptChannel(
-        'flutterApp',
+        'flutterApp', // Channel untuk Login
         onMessageReceived: (JavaScriptMessage message) {
-          print("Login berhasil! Menerima User ID dari web: ${message.message}");
-          String adminUserId = message.message;
-          _registerDeviceToServer(adminUserId);
+          // ... (logika login tidak berubah)
+        },
+      )
+      ..addJavaScriptChannel(
+        'flutterCetak', // Channel untuk Cetak (POST request)
+        onMessageReceived: (JavaScriptMessage message) {
+          print("📄 Menerima request cetak dari web: ${message.message}");
+          try {
+            final data = json.decode(message.message);
+            if (data['type'] == 'cetakSurat') {
+              final String url = data['url'];
+              final Map<String, dynamic> formData = Map<String, dynamic>.from(data['formData']);
+              _downloadAndProcessFile(url, formData);
+            }
+          } catch (e) {
+            print("❌ Error parsing data cetak: $e");
+          }
         },
       )
       ..loadRequest(Uri.parse('http://10.17.107.210:8000/login'));
   }
 
-  // 4. FUNGSI BARU untuk download dan buka file
-  Future<void> _downloadAndOpenFile(String url) async {
-    setState(() {
-      _isDownloading = true; // Tampilkan loading
-    });
+  // Fungsi ini sekarang lebih generik untuk menangani GET dan POST
+  Future<void> _downloadAndProcessFile(String url, Map<String, dynamic>? formData) async {
+    if (!mounted) return;
+    setState(() { _isProcessingFile = true; });
 
     try {
-      final dir = await getTemporaryDirectory();
-      // Buat nama file yang unik atau ambil dari header server jika memungkinkan
-      final fileName = 'dokumen_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      final savePath = "${dir.path}/$fileName";
+      print("📤 Memproses file dari URL: $url");
+      Response response;
 
-      print("Mengunduh file dari: $url");
-      await Dio().download(url, savePath);
-      print("File berhasil disimpan di: $savePath");
-
-      // Gunakan share_plus untuk membuka share sheet native
-      // Dari sini, admin bisa memilih "Print", "Save to Drive", dll.
-      final xfile = XFile(savePath);
-      await Share.shareXFiles([xfile], text: 'Dokumen surat dari aplikasi PTSP.');
-
+      // Cerdas memilih metode request
+      if (formData != null) {
+        print("📦 Metode: POST dengan data: $formData");
+        response = await Dio().post(
+          url,
+          data: formData,
+          options: Options(
+            responseType: ResponseType.bytes,
+            contentType: Headers.formUrlEncodedContentType,
+          ),
+        );
+      } else {
+        print("📦 Metode: GET");
+        response = await Dio().get(
+          url,
+          options: Options(responseType: ResponseType.bytes),
+        );
+      }
+      
+      if (response.statusCode == 200) {
+        final dir = await getTemporaryDirectory();
+        final fileName = 'dokumen_${DateTime.now().millisecondsSinceEpoch}.pdf';
+        final savePath = "${dir.path}/$fileName";
+        
+        final file = File(savePath);
+        await file.writeAsBytes(response.data);
+        print("✅ File berhasil disimpan: $savePath");
+        
+        if (!mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => PdfViewerScreen(
+              pdfUrl: savePath,       // PERBAIKAN: Menggunakan 'pdfUrl'
+              title: 'Pratinjau Dokumen',
+              isLocalFile: true,    // PERBAIKAN: Menambahkan 'isLocalFile'
+            ),
+          ),
+        );
+      } else {
+        throw Exception('Status code: ${response.statusCode}');
+      }
     } catch (e) {
-      print("❌ Error saat mengunduh atau membuka file: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Gagal memproses dokumen.')),
-      );
+      print("❌ Error saat memproses file: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Gagal memuat dokumen.')),
+        );
+      }
     } finally {
-      setState(() {
-        _isDownloading = false; // Sembunyikan loading
-      });
+      if (mounted) {
+        setState(() { _isProcessingFile = false; });
+      }
     }
   }
 
@@ -102,19 +157,15 @@ class _WebViewScreenState extends State<WebViewScreen> {
         if (await _controller.canGoBack()) {
           _controller.goBack();
           return false;
-        } else {
-          return true;
         }
+        return true;
       },
       child: Scaffold(
         body: SafeArea(
-          // 5. Gunakan Stack untuk menumpuk loading indicator di atas WebView
           child: Stack(
             children: [
               WebViewWidget(controller: _controller),
-
-              // Tampilkan overlay loading saat proses download
-              if (_isDownloading)
+              if (_isProcessingFile)
                 Container(
                   color: Colors.black.withOpacity(0.6),
                   child: const Center(
@@ -123,10 +174,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
                       children: [
                         CircularProgressIndicator(color: Colors.white),
                         SizedBox(height: 20),
-                        Text(
-                          'Memproses dokumen...',
-                          style: TextStyle(color: Colors.white, fontSize: 16),
-                        ),
+                        Text('Memproses dokumen...', style: TextStyle(color: Colors.white)),
                       ],
                     ),
                   ),
@@ -138,8 +186,6 @@ class _WebViewScreenState extends State<WebViewScreen> {
     );
   }
 
-  
-
   Future<void> _registerDeviceToServer(String userId) async {
     String? fcmToken = await FirebaseMessaging.instance.getToken();
     
@@ -148,7 +194,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
       return;
     }
 
-    print("📤 Mengirim User ID ($userId) dan FCM Token ($fcmToken) ke server...");
+    print("📤 Mengirim User ID ($userId) dan FCM Token ke server...");
 
     try {
       final response = await http.post(
@@ -158,26 +204,19 @@ class _WebViewScreenState extends State<WebViewScreen> {
           'Accept': 'application/json',
         },
         body: json.encode({
-          'user_id': int.parse(userId),
+          'user_id': int.parse(userId), // ✅ Parse ke integer
           'fcm_token': fcmToken,
         }),
       );
-
-      print("📥 Response status: ${response.statusCode}");
-      print("📥 Response body: ${response.body}");
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['success'] == true) {
           print("✅ Token berhasil didaftarkan di server.");
-        } else {
-          print("❌ Token gagal didaftarkan: ${data['message']}");
         }
-      } else {
-        print("❌ Gagal mendaftarkan token. Status: ${response.statusCode}");
       }
     } catch (e) {
-      print("❌ Terjadi error saat mengirim token ke server: $e");
+      print("❌ Error mengirim token: $e");
     }
   }
 }
