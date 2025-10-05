@@ -82,7 +82,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
           }
         },
       )
-      ..loadRequest(Uri.parse('http://10.17.107.210:8000/login'));
+      ..loadRequest(Uri.parse('http://10.182.81.210:8000/login'));
   }
 
   // Fungsi ini sekarang lebih generik untuk menangani GET dan POST
