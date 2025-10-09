@@ -1,7 +1,7 @@
 import 'dart:async';
 
+import 'package:MEAMBO/webview_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:ptsp_tipulu_app/webview_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -31,7 +31,7 @@ class _SplashScreenState extends State<SplashScreen> {
         // Tampilkan logo Anda di tengah layar
         child: Image.asset(
           'assets/images/logo.png', // Pastikan path logo ini benar
-          width: 150, // Sesuaikan ukuran logo
+          width: 200, // Sesuaikan ukuran logo
         ),
       ),
     );

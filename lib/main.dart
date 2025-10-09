@@ -1,9 +1,10 @@
+import 'package:MEAMBO/firebase_options.dart';
+import 'package:MEAMBO/notification_service.dart';
+import 'package:MEAMBO/splash_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
-import 'package:ptsp_tipulu_app/firebase_options.dart';
-import 'package:ptsp_tipulu_app/notification_service.dart';
-import 'package:ptsp_tipulu_app/splash_screen.dart';
+
 
 // Buat instance service agar bisa diakses dari mana saja (jika perlu)
 final notificationService = NotificationService();
