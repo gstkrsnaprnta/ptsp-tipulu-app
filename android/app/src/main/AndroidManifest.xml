@@ -20,7 +20,7 @@
     <!-- ✅ APLIKASI -->
     <application
         android:name="${applicationName}"
-        android:label="LIVE MEAMBO"
+        android:label="MEAMBO"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
