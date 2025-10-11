@@ -1,9 +1,9 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:ptsp_tipulu_ap/features/splash/screens/splash_screen.dart';
 import 'package:ptsp_tipulu_ap/firebase_options.dart';
 import 'package:ptsp_tipulu_ap/notification_service.dart';
-import 'package:ptsp_tipulu_ap/splash_screen.dart';
 
 
 /// Instance global untuk notification service (Singleton pattern).
@@ -11,7 +11,6 @@ final notificationService = NotificationService();
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  // Log untuk debugging saat notifikasi background diterima.
   print("🔔 Menangani notifikasi di background: ${message.messageId}");
 }
 

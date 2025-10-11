@@ -1,4 +1,4 @@
-name: MEAMBO
+name: ptsp_tipulu_ap
 description: "A new Flutter project."
 
 publish_to: 'none' 
@@ -31,6 +31,7 @@ dependencies:
   webview_flutter: ^4.10.0
   webview_flutter_android: ^4.10.0
   webview_flutter_wkwebview: ^3.23.1
+  image_picker: ^1.2.0
   
 dev_dependencies:
   flutter_test:
