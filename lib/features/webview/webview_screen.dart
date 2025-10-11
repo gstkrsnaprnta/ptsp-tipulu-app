@@ -12,8 +12,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
-/// Halaman utama aplikasi yang menampilkan konten web.
 class WebViewScreen extends StatefulWidget {
   const WebViewScreen({super.key});
 
@@ -29,49 +29,45 @@ class _WebViewScreenState extends State<WebViewScreen> {
   bool _isPageLoading = true;
   bool _isFileProcessing = false;
   String _loadingMessage = 'Memuat halaman...';
+  bool _isRefreshing = false; // indikator swipe refresh
 
   @override
   void initState() {
     super.initState();
 
-    // =====================================================================
-    // ✅ 1. Aktifkan hybrid composition untuk Android
-    // =====================================================================
     late final PlatformWebViewControllerCreationParams params;
-    if (WebViewPlatform.instance is AndroidWebViewPlatform) {
-      params = AndroidWebViewControllerCreationParams();
+
+    if (WebViewPlatform.instance is WebKitWebViewPlatform) {
+      params = WebKitWebViewControllerCreationParams(
+        allowsInlineMediaPlayback: true,
+      );
     } else {
       params = const PlatformWebViewControllerCreationParams();
     }
 
-    final WebViewController controller = WebViewController.fromPlatformCreationParams(params);
-
-    // =====================================================================
-    // ✅ 2. Konfigurasi dasar controller
-    // =====================================================================
-    _controller = controller
+    final controller = WebViewController.fromPlatformCreationParams(params)
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0x00000000))
+      ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (url) => setState(() {
-            _loadingMessage = 'Memuat halaman...';
-            _isPageLoading = true;
-          }),
-          onPageFinished: (url) {
+          onPageStarted: (_) {
+            setState(() {
+              _isPageLoading = true;
+              _loadingMessage = 'Memuat halaman...';
+            });
+          },
+          onPageFinished: (_) async {
             setState(() => _isPageLoading = false);
             _injectFileUploadHandler();
           },
           onNavigationRequest: (request) {
             final uri = Uri.parse(request.url);
 
-            // Buka link eksternal (WhatsApp, dsb)
             if (uri.host == 'wa.me' || uri.host == 'api.whatsapp.com') {
               launchUrl(uri, mode: LaunchMode.externalApplication);
               return NavigationDecision.prevent;
             }
 
-            // Tangani file PDF
             if (request.url.contains('/list-pengajuan/stream')) {
               _processFileRequest(request.url, "Membuka dokumen...");
               return NavigationDecision.prevent;
@@ -86,110 +82,75 @@ class _WebViewScreenState extends State<WebViewScreen> {
       ..addJavaScriptChannel('flutterFileUpload', onMessageReceived: _handleFileUpload)
       ..loadRequest(Uri.parse('${AppConfig.baseUrl}/login'));
 
-    // =====================================================================
-    // ✅ 3. Konfigurasi tambahan Android
-    // =====================================================================
     if (controller.platform is AndroidWebViewController) {
-      final AndroidWebViewController androidController =
-          controller.platform as AndroidWebViewController;
-      androidController.setMediaPlaybackRequiresUserGesture(false);
+      AndroidWebViewController.enableDebugging(true);
+      (controller.platform as AndroidWebViewController)
+          .setMediaPlaybackRequiresUserGesture(false);
     }
+
+    _controller = controller;
   }
 
- // =====================================================================
-// 🧩 Fungsi JavaScript Injection untuk intercept input file (versi fix)
-// =====================================================================
-void _injectFileUploadHandler() {
-  _controller.runJavaScript('''
-    (function() {
-      function setupFileInputs() {
-        const fileInputs = document.querySelectorAll('input[type="file"]');
-        fileInputs.forEach((input) => {
-          if (input.hasListenerAttached) return;
-          input.hasListenerAttached = true;
-
-          input.addEventListener('click', function(e) {
-            e.preventDefault();
-            window.currentFileInput = input;
-            try {
-              flutterFileUpload.postMessage('selectFile');
-            } catch (err) {
-              console.error('Flutter bridge error:', err);
-            }
-            return false; // jangan freeze
+  // ================== FILE UPLOAD HANDLER ==================
+  void _injectFileUploadHandler() {
+    _controller.runJavaScript('''
+      (function() {
+        function setupFileInputs() {
+          const fileInputs = document.querySelectorAll('input[type="file"]');
+          fileInputs.forEach((input) => {
+            if (input.hasListenerAttached) return;
+            input.hasListenerAttached = true;
+            input.addEventListener('click', function(e) {
+              e.preventDefault();
+              window.currentFileInput = input;
+              try {
+                flutterFileUpload.postMessage('selectFile');
+              } catch (err) {
+                console.error('Flutter bridge error:', err);
+              }
+              return false;
+            });
           });
-        });
-      }
+        }
+        setupFileInputs();
+        const observer = new MutationObserver(setupFileInputs);
+        observer.observe(document.body, { childList: true, subtree: true });
+        console.log('✅ File upload handler aktif tanpa freeze');
+      })();
+    ''');
+  }
 
-      setupFileInputs();
-
-      const observer = new MutationObserver(setupFileInputs);
-      observer.observe(document.body, { childList: true, subtree: true });
-
-      console.log('✅ File upload handler aktif tanpa freeze');
-    })();
-  ''');
-}
-
-
-
-  // =====================================================================
-  // 📸 Handle file upload
-  // =====================================================================
   void _handleFileUpload(JavaScriptMessage message) async {
-    if (message.message == 'selectFile') {
-      print('📂 Flutter menerima request pilih file');
-      try {
-        await Future.delayed(const Duration(milliseconds: 100));
-        if (!mounted) return;
+    if (message.message != 'selectFile') return;
 
-        final source = await _showImageSourceDialog();
-        if (source == null) return;
+    final source = await _showImageSourceDialog();
+    if (source == null) return;
 
-        bool granted = await _requestPermission(source);
-        if (!granted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                source == ImageSource.camera
-                    ? 'Izin kamera diperlukan'
-                    : 'Izin galeri diperlukan',
-              ),
-              backgroundColor: Colors.orange,
-            ),
-          );
-          return;
-        }
-
-        print('📱 Membuka ${source == ImageSource.camera ? "kamera" : "galeri"}...');
-        final XFile? pickedFile = await _picker.pickImage(
-          source: source,
-          maxWidth: 1920,
-          maxHeight: 1080,
-          imageQuality: 85,
-        );
-
-        if (pickedFile == null) {
-          print('⚠️ Tidak ada file dipilih');
-          return;
-        }
-
-        print('✅ File dipilih: ${pickedFile.path}');
-        await _uploadFileToWebView(File(pickedFile.path));
-      } catch (e) {
-        print('❌ Error upload: $e');
-      }
+    if (!await _requestPermission(source)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Izin diperlukan untuk kamera/galeri')),
+      );
+      return;
     }
+
+    final XFile? pickedFile = await _picker.pickImage(
+      source: source,
+      maxWidth: 1920,
+      maxHeight: 1080,
+      imageQuality: 85,
+    );
+
+    if (pickedFile == null) return;
+    await _uploadFileToWebView(File(pickedFile.path));
   }
 
   Future<bool> _requestPermission(ImageSource source) async {
     if (source == ImageSource.camera) {
-      final status = await Permission.camera.request();
-      return status.isGranted;
+      return (await Permission.camera.request()).isGranted;
     } else {
       if (Platform.isAndroid) {
-        final status = await Permission.photos.request();
-        if (status.isGranted) return true;
+        final photos = await Permission.photos.request();
+        if (photos.isGranted) return true;
         return (await Permission.storage.request()).isGranted;
       }
       return true;
@@ -221,18 +182,10 @@ void _injectFileUploadHandler() {
           dataTransfer.items.add(file);
           input.files = dataTransfer.files;
           input.dispatchEvent(new Event('change', { bubbles: true }));
-          console.log('✅ File set ke input: $fileName');
         })();
       ''');
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ Foto berhasil dipilih'),
-          backgroundColor: Colors.green,
-        ),
-      );
     } catch (e) {
-      print('❌ Error upload ke WebView: $e');
+      debugPrint('❌ Upload error: $e');
     } finally {
       setState(() => _isFileProcessing = false);
     }
@@ -246,18 +199,12 @@ void _injectFileUploadHandler() {
         return 'image/jpeg';
       case 'png':
         return 'image/png';
-      case 'gif':
-        return 'image/gif';
-      case 'webp':
-        return 'image/webp';
       default:
-        return 'image/jpeg';
+        return 'application/octet-stream';
     }
   }
 
-  // =====================================================================
-  // 🧾 Fungsi-fungsi pendukung login & cetak
-  // =====================================================================
+  // ================== CETAK & LOGIN ==================
   void _handleLoginMessage(JavaScriptMessage message) {
     final userId = message.message.trim();
     if (RegExp(r'^\d+$').hasMatch(userId)) {
@@ -276,13 +223,13 @@ void _injectFileUploadHandler() {
         );
       }
     } catch (e) {
-      print("❌ Error parsing cetak: $e");
+      debugPrint("❌ Error parsing cetak: $e");
     }
   }
 
   Future<void> _processFileRequest(String url, String message,
       [Map<String, dynamic>? formData]) async {
-    if (!mounted || _isFileProcessing) return;
+    if (!mounted) return;
     setState(() {
       _loadingMessage = message;
       _isFileProcessing = true;
@@ -291,9 +238,8 @@ void _injectFileUploadHandler() {
     try {
       final cookieObject =
           await _controller.runJavaScriptReturningResult('document.cookie');
-      final cookies = cookieObject is String
-          ? cookieObject.replaceAll('"', '')
-          : '';
+      final cookies =
+          cookieObject is String ? cookieObject.replaceAll('"', '') : '';
 
       final savePath = await _apiService.downloadAndProcessFile(
         url: url,
@@ -303,12 +249,7 @@ void _injectFileUploadHandler() {
 
       if (savePath != null && mounted) {
         if (url.contains('download')) {
-          final xfile = XFile(savePath);
-          await Share.shareXFiles(
-            [xfile],
-            subject: 'Dokumen PTSP',
-            text: 'Berikut dokumen dari aplikasi PTSP.',
-          );
+          await Share.shareXFiles([XFile(savePath)], subject: 'Dokumen PTSP');
         } else {
           Navigator.push(
             context,
@@ -322,52 +263,18 @@ void _injectFileUploadHandler() {
         }
       }
     } catch (e) {
-      print('❌ Gagal download file: $e');
+      debugPrint('❌ Gagal download file: $e');
     } finally {
       if (mounted) setState(() => _isFileProcessing = false);
     }
   }
 
-  Future<ImageSource?> _showImageSourceDialog() {
-    return showModalBottomSheet<ImageSource>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 16),
-              const Text('Pilih Sumber Foto',
-                  style: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold)),
-              ListTile(
-                leading:
-                    const Icon(Icons.camera_alt, color: Colors.blue),
-                title: const Text('Kamera'),
-                onTap: () => Navigator.pop(context, ImageSource.camera),
-              ),
-              ListTile(
-                leading:
-                    const Icon(Icons.photo_library, color: Colors.green),
-                title: const Text('Galeri'),
-                onTap: () => Navigator.pop(context, ImageSource.gallery),
-              ),
-              const SizedBox(height: 12),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
+  // ================== UI ==================
   @override
   Widget build(BuildContext context) {
+    double dragDistance = 0;
+    const double refreshThreshold = 120;
+
     return WillPopScope(
       onWillPop: () async {
         if (await _controller.canGoBack()) {
@@ -377,18 +284,86 @@ void _injectFileUploadHandler() {
         return true;
       },
       child: Scaffold(
-        body: RefreshIndicator(
-          onRefresh: () async => await _controller.reload(),
-          child: SafeArea(
-            child: Stack(
-              children: [
-                WebViewWidget(controller: _controller),
-                if (_isPageLoading)
-                  LoadingOverlay(message: _loadingMessage),
-                if (_isFileProcessing)
-                  LoadingOverlay(message: _loadingMessage),
-              ],
-            ),
+        body: SafeArea(
+          child: Stack(
+            children: [
+              Listener(
+                onPointerMove: (event) {
+                  // Swipe ke bawah dari atas untuk refresh
+                  if (event.delta.dy > 0 && dragDistance < refreshThreshold) {
+                    dragDistance += event.delta.dy;
+                    if (dragDistance > 50 && !_isRefreshing) {
+                      setState(() => _isRefreshing = true);
+                    }
+                  }
+                },
+                onPointerUp: (_) async {
+                  if (dragDistance > refreshThreshold) {
+                    await _controller.reload();
+                  }
+                  dragDistance = 0;
+                  setState(() => _isRefreshing = false);
+                },
+                child: WebViewWidget(controller: _controller),
+              ),
+
+              // Pull refresh indicator
+              if (_isRefreshing)
+                Positioned(
+                  top: 30,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Column(
+                      children: const [
+                        CircularProgressIndicator(strokeWidth: 2),
+                        SizedBox(height: 8),
+                        Text("Menyegarkan halaman...",
+                            style: TextStyle(fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ),
+
+              if (_isPageLoading)
+                LoadingOverlay(message: _loadingMessage),
+              if (_isFileProcessing)
+                LoadingOverlay(message: _loadingMessage),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<ImageSource?> _showImageSourceDialog() {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 16),
+              const Text('Pilih Sumber Foto',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: Colors.blue),
+                title: const Text('Kamera'),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Colors.green),
+                title: const Text('Galeri'),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+              const SizedBox(height: 12),
+            ],
           ),
         ),
       ),
